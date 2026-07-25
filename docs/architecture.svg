@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 760" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#37474f"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="980" height="760" fill="#ffffff"/>
+  <text x="490" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a237e">gcp-devops-takehome — architecture</text>
+
+  <!-- Public internet -->
+  <ellipse cx="150" cy="90" rx="90" ry="34" fill="#eceff1" stroke="#607d8b" stroke-width="1.5"/>
+  <text x="150" y="95" text-anchor="middle" font-size="13" fill="#263238">Public internet</text>
+
+  <!-- GitHub -->
+  <rect x="620" y="60" width="180" height="56" rx="8" fill="#eceff1" stroke="#607d8b" stroke-width="1.5"/>
+  <text x="710" y="83" text-anchor="middle" font-size="13" font-weight="bold" fill="#263238">GitHub</text>
+  <text x="710" y="101" text-anchor="middle" font-size="11" fill="#546e7a">push to main</text>
+
+  <!-- Cloud Build -->
+  <rect x="620" y="170" width="180" height="86" rx="8" fill="#e3f2fd" stroke="#1565c0" stroke-width="1.5"/>
+  <text x="710" y="193" text-anchor="middle" font-size="13" font-weight="bold" fill="#0d47a1">Cloud Build</text>
+  <text x="710" y="211" text-anchor="middle" font-size="11" fill="#0d47a1">trigger: deploy-on-push</text>
+  <text x="710" y="227" text-anchor="middle" font-size="11" fill="#0d47a1">SA: sa-cloudbuild-deploy</text>
+  <text x="710" y="243" text-anchor="middle" font-size="11" fill="#0d47a1">build → push → deploy</text>
+
+  <!-- Artifact Registry -->
+  <rect x="850" y="180" width="110" height="66" rx="8" fill="#fff3e0" stroke="#ef6c00" stroke-width="1.5"/>
+  <text x="905" y="205" text-anchor="middle" font-size="12" font-weight="bold" fill="#e65100">Artifact</text>
+  <text x="905" y="220" text-anchor="middle" font-size="12" font-weight="bold" fill="#e65100">Registry</text>
+  <text x="905" y="236" text-anchor="middle" font-size="10" fill="#e65100">app-images</text>
+
+  <!-- VPC boundary -->
+  <rect x="330" y="330" width="360" height="230" rx="10" fill="none" stroke="#8e24aa" stroke-width="1.5" stroke-dasharray="6,4"/>
+  <text x="345" y="352" font-size="12" font-weight="bold" fill="#6a1b9a">VPC: app-network / app-subnet</text>
+
+  <!-- service-a -->
+  <rect x="80" y="200" width="200" height="100" rx="8" fill="#e8f5e9" stroke="#2e7d32" stroke-width="1.5"/>
+  <text x="180" y="225" text-anchor="middle" font-size="14" font-weight="bold" fill="#1b5e20">service-a (frontend)</text>
+  <text x="180" y="243" text-anchor="middle" font-size="11" fill="#1b5e20">Cloud Run · ingress: all</text>
+  <text x="180" y="259" text-anchor="middle" font-size="11" fill="#1b5e20">SA: sa-service-a</text>
+  <text x="180" y="275" text-anchor="middle" font-size="11" fill="#1b5e20">Direct VPC egress (all-traffic)</text>
+  <text x="180" y="291" text-anchor="middle" font-size="11" fill="#1b5e20">min-instances: 0</text>
+
+  <!-- service-b -->
+  <rect x="380" y="420" width="200" height="100" rx="8" fill="#fce4ec" stroke="#ad1457" stroke-width="1.5"/>
+  <text x="480" y="445" text-anchor="middle" font-size="14" font-weight="bold" fill="#880e4f">service-b (backend)</text>
+  <text x="480" y="463" text-anchor="middle" font-size="11" fill="#880e4f">Cloud Run · ingress: internal</text>
+  <text x="480" y="479" text-anchor="middle" font-size="11" fill="#880e4f">SA: sa-service-b</text>
+  <text x="480" y="495" text-anchor="middle" font-size="11" fill="#880e4f">no --allow-unauthenticated</text>
+  <text x="480" y="511" text-anchor="middle" font-size="11" fill="#880e4f">min-instances: 0</text>
+
+  <!-- Secret Manager -->
+  <rect x="720" y="440" width="160" height="80" rx="8" fill="#fff8e1" stroke="#f9a825" stroke-width="1.5"/>
+  <text x="800" y="465" text-anchor="middle" font-size="13" font-weight="bold" fill="#f57f17">Secret Manager</text>
+  <text x="800" y="483" text-anchor="middle" font-size="11" fill="#f57f17">APP_SECRET</text>
+  <text x="800" y="499" text-anchor="middle" font-size="10" fill="#f57f17">secretAccessor: sa-service-b</text>
+
+  <!-- Monitoring -->
+  <rect x="80" y="420" width="200" height="100" rx="8" fill="#ede7f6" stroke="#5e35b1" stroke-width="1.5"/>
+  <text x="180" y="443" text-anchor="middle" font-size="13" font-weight="bold" fill="#4527a0">Cloud Monitoring</text>
+  <text x="180" y="461" text-anchor="middle" font-size="11" fill="#4527a0">uptime check (service-a)</text>
+  <text x="180" y="477" text-anchor="middle" font-size="11" fill="#4527a0">5xx alert (service-a)</text>
+  <text x="180" y="497" text-anchor="middle" font-size="11" fill="#4527a0">→ email channel</text>
+
+  <!-- Arrows -->
+  <!-- internet -> service-a -->
+  <line x1="150" y1="124" x2="170" y2="198" stroke="#37474f" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="90" y="165" font-size="10" fill="#37474f">HTTPS</text>
+
+  <!-- github -> cloud build -->
+  <line x1="710" y1="116" x2="710" y2="168" stroke="#37474f" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- cloud build -> artifact registry -->
+  <line x1="800" y1="205" x2="848" y2="205" stroke="#37474f" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <text x="805" y="198" font-size="10" fill="#37474f">push</text>
+
+  <!-- cloud build -> service-a (deploy) -->
+  <path d="M620,190 C 420,150 260,150 200,198" fill="none" stroke="#37474f" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+  <text x="360" y="150" font-size="10" fill="#37474f">deploy</text>
+
+  <!-- cloud build -> service-b (deploy) -->
+  <path d="M660,256 C 600,340 560,380 500,418" fill="none" stroke="#37474f" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrow)"/>
+  <text x="590" y="360" font-size="10" fill="#37474f">deploy</text>
+
+  <!-- service-a -> service-b -->
+  <path d="M220,300 C 260,360 320,410 385,455" fill="none" stroke="#2e7d32" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="222" y="375" font-size="10" fill="#1b5e20">Direct VPC egress +</text>
+  <text x="222" y="389" font-size="10" fill="#1b5e20">Bearer ID token</text>
+  <text x="222" y="403" font-size="10" fill="#1b5e20">(needs run.invoker)</text>
+
+  <!-- service-b -> secret manager -->
+  <line x1="580" y1="470" x2="718" y2="470" stroke="#f57f17" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- monitoring -> service-a -->
+  <path d="M180,418 C 180,360 180,320 180,302" fill="none" stroke="#5e35b1" stroke-width="1.5" stroke-dasharray="3,3" marker-end="url(#arrow)"/>
+  <text x="188" y="360" font-size="10" fill="#4527a0">checks</text>
+
+  <!-- Legend -->
+  <rect x="20" y="600" width="940" height="140" rx="8" fill="#fafafa" stroke="#cfd8dc"/>
+  <text x="35" y="622" font-size="12" font-weight="bold" fill="#263238">Notes</text>
+  <text x="35" y="642" font-size="11" fill="#37474f">• service-b is unreachable from a laptop: curl fails on network (ingress: internal) and would fail on auth (no allow-unauthenticated) even if reachable.</text>
+  <text x="35" y="660" font-size="11" fill="#37474f">• APP_SECRET is never a plaintext env var, never in the image, never in git — resolved at container start via Cloud Run's Secret Manager integration.</text>
+  <text x="35" y="678" font-size="11" fill="#37474f">• Both services scale to zero (min-instances=0); no standing compute cost.</text>
+  <text x="35" y="696" font-size="11" fill="#37474f">• Dedicated service accounts throughout — no default compute SA, no default Cloud Build SA.</text>
+  <text x="35" y="714" font-size="11" fill="#37474f">• Deploys happen only via the push-triggered Cloud Build pipeline — no manual `gcloud run deploy`.</text>
+</svg>

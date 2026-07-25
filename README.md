@@ -5,22 +5,7 @@ private, internal-only backend (`service-b`) over the VPC with an
 authenticated ID token. The backend reads a secret from Secret Manager at
 runtime.
 
-```
-public internet
-      │
-      ▼
-┌────────────────────┐
-│ frontend (public)   │  Cloud Run, ingress: all
-│ service-a           │  Direct VPC egress (all-traffic)
-└─────────┬────────────┘
-          │ private call over VPC
-          │ (Authorization: Bearer <ID token>)
-          ▼
-┌────────────────────┐
-│ backend (private)   │  Cloud Run, ingress: internal only
-│ service-b           │  reads APP_SECRET from Secret Manager
-└────────────────────┘
-```
+![architecture diagram](docs/architecture.svg)
 
 One-time GCP provisioning (service accounts, secret, IAM bindings, Cloud
 Build trigger) was run locally via `gcloud`; the exact commands are inlined
@@ -33,6 +18,7 @@ real project ID or email to the repo.
 service-a/       frontend (public) — Flask + gunicorn
 service-b/       backend (private) — Flask + gunicorn
 cloudbuild.yaml  build + push + deploy, triggered on push to main
+docs/            architecture diagram + alert screenshots
 ```
 
 ## Setup / commands
@@ -91,11 +77,13 @@ account.
    ```
 
 6. **VPC network and subnet** for Direct VPC egress (this project has no
-   default VPC network, so a minimal custom one is needed):
+   default VPC network, so a minimal custom one is needed; Private Google
+   Access is required for the frontend to reach the backend's URL):
    ```bash
    gcloud compute networks create "$NETWORK" --subnet-mode=custom
    gcloud compute networks subnets create "$SUBNET" \
-     --network="$NETWORK" --region="$REGION" --range=10.10.0.0/24
+     --network="$NETWORK" --region="$REGION" --range=10.10.0.0/24 \
+     --enable-private-ip-google-access
    ```
 
 7. **Dedicated Cloud Build service account**, scoped to exactly what the
@@ -157,7 +145,8 @@ account.
    ```
    Watch it in Cloud Build console or `gcloud builds list --ongoing`.
 
-10. **Set up monitoring** (needs the frontend's live URL, so run after step 9):
+10. **Set up monitoring** (needs the frontend's live URL, so run after step 9;
+    requires `gcloud components install alpha beta`):
    ```bash
    FRONTEND_URL=$(gcloud run services describe service-a --region="$REGION" --format='value(status.url)')
    FRONTEND_HOST=${FRONTEND_URL#https://}
@@ -165,29 +154,41 @@ account.
    CHANNEL_ID=$(gcloud beta monitoring channels create --display-name="devops-takehome-alerts" \
      --type=email --channel-labels=email_address="$NOTIFICATION_EMAIL" --format='value(name)')
 
-   CHECK_NAME=$(gcloud monitoring uptime create "service-a-uptime" --resource-type=uptime-url \
-     --protocol=https --hostname="$FRONTEND_HOST" --path="/" --period=5 --format='value(name)')
-   CHECK_ID="${CHECK_NAME##*/}"
-
-   cat > /tmp/uptime-alert-policy.json <<EOF
+   # Frontend 5xx errors
+   cat > /tmp/frontend-5xx.json <<EOF
    {
-     "displayName": "service-a uptime failure",
-     "combiner": "OR",
-     "conditions": [{
-       "displayName": "Uptime check failing",
-       "conditionThreshold": {
-         "filter": "resource.type=\"uptime_url\" AND metric.type=\"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.label.\"check_id\"=\"${CHECK_ID}\"",
-         "comparison": "COMPARISON_LT", "thresholdValue": 1, "duration": "0s",
-         "aggregations": [{"alignmentPeriod": "300s", "perSeriesAligner": "ALIGN_FRACTION_TRUE",
-           "crossSeriesReducer": "REDUCE_COUNT_FALSE", "groupByFields": ["resource.label.host"]}]
-       }
-     }],
-     "notificationChannels": ["${CHANNEL_ID}"],
-     "alertStrategy": {"autoClose": "1800s"}
+     "displayName": "service-a 5xx errors", "combiner": "OR",
+     "conditions": [{"displayName": "Frontend returning 5xx", "conditionThreshold": {
+       "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"service-a\" AND metric.type=\"run.googleapis.com/request_count\" AND metric.labels.response_code_class=\"5xx\"",
+       "comparison": "COMPARISON_GT", "thresholdValue": 0, "duration": "0s",
+       "aggregations": [{"alignmentPeriod": "300s", "perSeriesAligner": "ALIGN_COUNT", "crossSeriesReducer": "REDUCE_SUM"}]
+     }}],
+     "notificationChannels": ["${CHANNEL_ID}"], "alertStrategy": {"autoClose": "1800s"}
    }
    EOF
-   gcloud alpha monitoring policies create --policy-from-file=/tmp/uptime-alert-policy.json
-   rm /tmp/uptime-alert-policy.json
+   gcloud alpha monitoring policies create --policy-from-file=/tmp/frontend-5xx.json
+
+   # Frontend uptime check + alert
+   CHECK_NAME=$(gcloud monitoring uptime create "service-a-uptime" --resource-type=uptime-url \
+     --resource-labels=host="$FRONTEND_HOST",project_id="$PROJECT_ID" \
+     --protocol=https --path="/" --period=5 --format='value(name)')
+   CHECK_ID="${CHECK_NAME##*/}"
+
+   cat > /tmp/uptime-alert.json <<EOF
+   {
+     "displayName": "service-a uptime failure", "combiner": "OR",
+     "conditions": [{"displayName": "Uptime check failing", "conditionThreshold": {
+       "filter": "resource.type=\"uptime_url\" AND metric.type=\"monitoring.googleapis.com/uptime_check/check_passed\" AND metric.label.\"check_id\"=\"${CHECK_ID}\"",
+       "comparison": "COMPARISON_GT", "thresholdValue": 1, "duration": "0s",
+       "aggregations": [{"alignmentPeriod": "1200s", "perSeriesAligner": "ALIGN_NEXT_OLDER",
+         "crossSeriesReducer": "REDUCE_COUNT_FALSE", "groupByFields": ["resource.label.host"]}]
+     }}],
+     "notificationChannels": ["${CHANNEL_ID}"], "alertStrategy": {"autoClose": "1800s"}
+   }
+   EOF
+   gcloud alpha monitoring policies create --policy-from-file=/tmp/uptime-alert.json
+
+   rm /tmp/frontend-5xx.json /tmp/uptime-alert.json
    ```
 
 11. **Verify:**
@@ -265,21 +266,51 @@ one-time IAM/resource setup (steps 1–8 above) was run by hand, locally.
 
 ## Monitoring
 
-An uptime check on `service-a`'s public URL (HTTPS, `/`, checked every 5
-minutes from multiple regions) feeds an alert policy that fires when the
-check's success fraction drops below 100% over a 5-minute window, notifying
-an email channel. Chosen because it's the cheapest, most direct signal that
-"is the one public entrypoint actually up" — for a two-service demo app,
-that's the failure mode that matters most (versus, say, a 5xx-rate alert
-on request volume that's near zero most of the time at min-instances=0).
+Two alert policies, both notifying the same email channel:
+
+- **Frontend uptime** — HTTPS check on `service-a`'s public URL every 5 min
+  from multiple regions; fires if more than one region reports it down.
+  The core "is the app up" signal.
+- **Frontend 5xx** — fires on any 5xx from `service-a`'s built-in
+  `request_count` metric.
+
+Verified live: temporarily pointed `service-a` at an invalid `BACKEND_URL`,
+which forced real 500s. Both the 5xx alert and the uptime alert fired and
+delivered email within a few minutes; reverted immediately after and
+confirmed the frontend was healthy again.
+
+<img src="docs/alert-5xx-firing.png" width="420" alt="5xx alert firing"> <img src="docs/alert-uptime-firing.png" width="420" alt="uptime alert firing">
+
+The uptime alert auto-closed once the frontend recovered:
+
+<img src="docs/alert-uptime-recovered.png" width="420" alt="uptime alert recovered">
 
 ## Cost
 
-- Both services deploy with `--min-instances=0` — scale to zero, no idle cost.
-- Artifact Registry storage and a handful of Cloud Build minutes are the
-  only steady-state costs, both negligible at this scale.
-- *(Fill in after running: approximate cost incurred, and confirmation
-  teardown was run.)*
+- Both services deployed with `--min-instances=0` — scale to zero, no idle cost.
+- No billing IAM was granted on this project, so an exact dollar figure
+  isn't pullable. Reasoned estimate: effectively $0 — a handful of Cloud
+  Build runs (~1-2 min each, well inside the 120 free build-minutes/day),
+  a few small Flask images in Artifact Registry, and light Secret
+  Manager/Monitoring API usage, all within GCP's always-free tier.
+- **Torn down** via `infra/teardown.sh` (not committed — see
+  [Setup / commands](#setup--commands)):
+
+  | Created | Removed |
+  |---|---|
+  | Cloud Run: `service-a`, `service-b` | ✅ |
+  | Artifact Registry: `app-images` | ✅ |
+  | Service accounts: `sa-service-a`, `sa-service-b`, `sa-cloudbuild-deploy` | ✅ |
+  | Secret: `APP_SECRET` | ✅ |
+  | Secret: connection's auto-created GitHub OAuth token | ✅ |
+  | Cloud Build: `gh-connection`, its repository link, `deploy-on-push` trigger | ✅ |
+  | Monitoring: 2 alert policies, 1 uptime check, `devops-takehome-alerts` channel | ✅ |
+  | Extra IAM grant on Cloud Build's service agent (`secretmanager.admin`) | ✅ |
+  | VPC: `app-network`, `app-subnet` | ✅ |
+
+  Nothing pre-existing in this shared project (`cloudrun-assignment` repo/alert
+  policy, `waldai-containerinsights` channel, `service-a@`/`service-b@`/`cicd-223@`
+  service accounts, `backend-sercet`) was touched.
 
 ## With more time, I'd...
 
