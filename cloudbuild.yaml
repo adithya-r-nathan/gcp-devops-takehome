@@ -10,8 +10,8 @@ substitutions:
   _SA_BACKEND: sa-service-b@${PROJECT_ID}.iam.gserviceaccount.com
   _SA_FRONTEND: sa-service-a@${PROJECT_ID}.iam.gserviceaccount.com
   _SECRET_NAME: APP_SECRET
-  _NETWORK: default
-  _SUBNET: default
+  _NETWORK: app-network
+  _SUBNET: app-subnet
 
 steps:
   - id: build-backend
