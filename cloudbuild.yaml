@@ -1,0 +1,110 @@
+# Builds both images, pushes them to Artifact Registry, and deploys them to
+# Cloud Run. Wired to a Cloud Build trigger that fires on push to main
+# (see infra/01-bootstrap.sh). Backend is deployed before the frontend so the
+# frontend's env var can point at the backend's URL; the run.invoker binding
+# is re-applied every build so it's always correct even on the first deploy.
+
+substitutions:
+  _REGION: us-central1
+  _AR_REPO: app-images
+  _SA_BACKEND: sa-service-b@${PROJECT_ID}.iam.gserviceaccount.com
+  _SA_FRONTEND: sa-service-a@${PROJECT_ID}.iam.gserviceaccount.com
+  _SECRET_NAME: APP_SECRET
+  _NETWORK: default
+  _SUBNET: default
+
+steps:
+  - id: build-backend
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/service-b:$SHORT_SHA
+      - service-b
+
+  - id: build-frontend
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/service-a:$SHORT_SHA
+      - service-a
+
+  - id: push-backend
+    name: gcr.io/cloud-builders/docker
+    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/service-b:$SHORT_SHA']
+    waitFor: ['build-backend']
+
+  - id: push-frontend
+    name: gcr.io/cloud-builders/docker
+    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/service-a:$SHORT_SHA']
+    waitFor: ['build-frontend']
+
+  # Backend: private, internal-only ingress, secret pulled from Secret Manager
+  # at runtime (never a plaintext env var), dedicated runtime SA.
+  - id: deploy-backend
+    name: gcr.io/google-cloud-sdk/slim
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - service-b
+      - --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/service-b:$SHORT_SHA
+      - --region=${_REGION}
+      - --platform=managed
+      - --no-allow-unauthenticated
+      - --ingress=internal
+      - --service-account=${_SA_BACKEND}
+      - --set-secrets=APP_SECRET=${_SECRET_NAME}:latest
+      - --min-instances=0
+      - --max-instances=2
+      - --quiet
+    waitFor: ['push-backend']
+
+  # Resource-scoped: only the frontend SA gets run.invoker, only on this service.
+  - id: bind-invoker
+    name: gcr.io/google-cloud-sdk/slim
+    entrypoint: gcloud
+    args:
+      - run
+      - services
+      - add-iam-policy-binding
+      - service-b
+      - --region=${_REGION}
+      - --member=serviceAccount:${_SA_FRONTEND}
+      - --role=roles/run.invoker
+      - --quiet
+    waitFor: ['deploy-backend']
+
+  # Frontend: public ingress, but egresses over the VPC (Direct VPC egress)
+  # so its calls to the internal-only backend are recognized as internal traffic.
+  - id: deploy-frontend
+    name: gcr.io/google-cloud-sdk/slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        BACKEND_URL=$(gcloud run services describe service-b --region=${_REGION} --format='value(status.url)')
+        gcloud run deploy service-a \
+          --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/service-a:$SHORT_SHA \
+          --region=${_REGION} \
+          --platform=managed \
+          --allow-unauthenticated \
+          --ingress=all \
+          --service-account=${_SA_FRONTEND} \
+          --set-env-vars=BACKEND_URL=$$BACKEND_URL \
+          --network=${_NETWORK} \
+          --subnet=${_SUBNET} \
+          --vpc-egress=all-traffic \
+          --min-instances=0 \
+          --max-instances=2 \
+          --quiet
+    waitFor: ['push-frontend', 'bind-invoker']
+
+images:
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/service-b:$SHORT_SHA'
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/service-a:$SHORT_SHA'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
