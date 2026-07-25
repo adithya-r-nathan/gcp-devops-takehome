@@ -1,6 +1,6 @@
 # Builds both images, pushes them to Artifact Registry, and deploys them to
-# Cloud Run. Wired to a Cloud Build trigger that fires on push to main
-# (see infra/01-bootstrap.sh). Backend is deployed before the frontend so the
+# Cloud Run. Wired to a Cloud Build push trigger on main (see README for the
+# one-time setup commands). Backend is deployed before the frontend so the
 # frontend's env var can point at the backend's URL; the run.invoker binding
 # is re-applied every build so it's always correct even on the first deploy.
 
@@ -43,7 +43,7 @@ steps:
   # Backend: private, internal-only ingress, secret pulled from Secret Manager
   # at runtime (never a plaintext env var), dedicated runtime SA.
   - id: deploy-backend
-    name: gcr.io/google-cloud-sdk/slim
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: gcloud
     args:
       - run
@@ -63,7 +63,7 @@ steps:
 
   # Resource-scoped: only the frontend SA gets run.invoker, only on this service.
   - id: bind-invoker
-    name: gcr.io/google-cloud-sdk/slim
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: gcloud
     args:
       - run
@@ -79,7 +79,7 @@ steps:
   # Frontend: public ingress, but egresses over the VPC (Direct VPC egress)
   # so its calls to the internal-only backend are recognized as internal traffic.
   - id: deploy-frontend
-    name: gcr.io/google-cloud-sdk/slim
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
     entrypoint: bash
     args:
       - -c
